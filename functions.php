@@ -176,19 +176,42 @@ if ( defined( 'JETPACK__VERSION' ) ) {
 	require get_template_directory() . '/inc/jetpack.php';
 }
 
+// 1. Register the rewrite rule — captures everything after /app/ including deep paths
+add_action('init', function () {
+    add_rewrite_rule(
+        '^app(/.*)?$',           // matches /app, /app/foo, /app/foo/bar/baz
+        'index.php?app_path=$matches[1]',
+        'top'
+    );
+});
+
+// 2. Whitelist the query var so WP doesn't strip it
+add_filter('query_vars', function ($vars) {
+    $vars[] = 'app_path';
+    return $vars;
+});
+
+// 3. Serve index.html for any matched app_path
 add_action('template_redirect', function () {
-    $path = get_query_var('app_path');
-    if ($path !== false) {
+    $path = get_query_var('app_path', null);
+
+    // Match both /app and /app/anything/deep
+    if ($path !== null) {
         $file = get_template_directory() . '/dist/index.html';
         if (file_exists($file)) {
             $html = file_get_contents($file);
+
+            // Use the site root as base so absolute asset paths (/assets/...) resolve correctly
             $base = get_template_directory_uri() . '/dist/';
-            // Inject <base> tag so all relative paths resolve correctly
+
             $html = str_replace(
                 '<head>',
-                '<head><base href="' . $base . '">',
+                '<head><base href="' . esc_url($base) . '/">',
                 $html
             );
+
+            status_header(200);
+            header('Content-Type: text/html; charset=utf-8');
             echo $html;
             exit;
         }
