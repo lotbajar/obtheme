@@ -176,8 +176,21 @@ if ( defined( 'JETPACK__VERSION' ) ) {
 	require get_template_directory() . '/inc/jetpack.php';
 }
 
-add_rewrite_rule(
-    '^app/(.*)$',
-    home_url('/wp-content/themes/' . get_template() . '/dist/$1'),
-    'top'
-);
+add_action('template_redirect', function () {
+    $path = get_query_var('app_path');
+    if ($path !== false) {
+        $file = get_template_directory() . '/dist/index.html';
+        if (file_exists($file)) {
+            $html = file_get_contents($file);
+            $base = get_template_directory_uri() . '/dist/';
+            // Inject <base> tag so all relative paths resolve correctly
+            $html = str_replace(
+                '<head>',
+                '<head><base href="' . $base . '">',
+                $html
+            );
+            echo $html;
+            exit;
+        }
+    }
+});
