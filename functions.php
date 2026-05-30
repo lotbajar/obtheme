@@ -176,12 +176,20 @@ if ( defined( 'JETPACK__VERSION' ) ) {
 	require get_template_directory() . '/inc/jetpack.php';
 }
 
-// 1. Rewrite rule — catches all paths but WP native routes still take priority
+// 1. Rewrite rules — catches all paths but WP native routes still take priority
 add_action('init', function () {
+    // Catch root "/"
+    add_rewrite_rule(
+        '^$',
+        'index.php?app_path=__root__',
+        'bottom'
+    );
+
+    // Catch all sub-paths
     add_rewrite_rule(
         '^(.+?)/?$',
         'index.php?app_path=$matches[1]',
-        'bottom' // <-- 'bottom' so WP's own rules (pages, posts) match first
+        'bottom'
     );
 });
 
@@ -195,7 +203,12 @@ add_filter('query_vars', function ($vars) {
 add_action('template_redirect', function () {
     $path = get_query_var('app_path', null);
 
-    if ($path === null || $path === '') {
+    // Resolve the __root__ sentinel back to an empty path
+    if ($path === '__root__') {
+        $path = '';
+    }
+
+    if ($path === null) {
         return; // let WP handle it
     }
 
@@ -203,20 +216,21 @@ add_action('template_redirect', function () {
     $real_dist = realpath($dist_dir);
 
     if (!$real_dist) {
-        return; // dist folder doesn't exist, bail out
+        return;
     }
 
     // Sanitize: prevent directory traversal
     $clean_path = ltrim($path, '/');
     $clean_path = str_replace(['..', '\\'], '', $clean_path);
 
-    $candidates = [
-        $dist_dir . '/' . $clean_path . '/index.html',
-        $dist_dir . '/' . $clean_path . '.html',
-    ];
-
-    // NOTE: No root dist/index.html fallback here — if no file matches,
-    // we fall through to WordPress so pages/posts render normally
+    // Root path → try dist/index.html directly
+    // Sub-path  → try dist/{path}/index.html, then dist/{path}.html
+    $candidates = $clean_path === ''
+        ? [$dist_dir . '/index.html']
+        : [
+            $dist_dir . '/' . $clean_path . '/index.html',
+            $dist_dir . '/' . $clean_path . '.html',
+          ];
 
     foreach ($candidates as $file) {
         $real = realpath($file);
