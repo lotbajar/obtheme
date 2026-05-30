@@ -234,7 +234,7 @@ add_action('template_redirect', function () {
         $html = file_get_contents($real);
 
         $base_url = get_template_directory_uri() . '/dist/';
-        $fallback_url = get_template_directory_uri() . '/dist/';
+        $fallback_url = get_template_directory_uri() . '/dist/images/';
 
         $script = '
         <script>
