@@ -228,41 +228,33 @@ add_action('template_redirect', function () {
     // we fall through to WordPress so pages/posts render normally
 
     foreach ($candidates as $file) {
-        $real = realpath($file);
+    $real = realpath($file);
 
-        if ($real && str_starts_with($real, $real_dist . DIRECTORY_SEPARATOR)) {
-            $html = file_get_contents($real);
+    if ($real && str_starts_with($real, $real_dist . DIRECTORY_SEPARATOR)) {
+        $html = file_get_contents($real);
 
-            $base_url = get_template_directory_uri() . '/dist/';
-            $html = str_replace(
-                '<head>',
-                '<head><base href="' . esc_url($base_url) . '">',
-                $html
-            );
+        $base_url = get_template_directory_uri() . '/dist/';
+        $fallback_url = get_template_directory_uri() . '/dist/';
 
-            status_header(200);
-            header('Content-Type: text/html; charset=utf-8');
-            echo $html;
-            exit;
-        }
-    }
-
-    // No dist file found — let WordPress handle this URL normally
-});
-
-function enqueue_image_fallback_script() {
-    ?>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('img').forEach(img => {
-                img.onerror = function() {
-                    const filename = this.src.split('/').pop();
-                    this.src = '<?php echo get_template_directory_uri(); ?>/dist/' + filename;
-                    this.onerror = null;
-                };
+        $script = '
+        <script>
+            document.addEventListener("DOMContentLoaded", function() {
+                document.querySelectorAll("img").forEach(function(img) {
+                    img.onerror = function() {
+                        var filename = this.src.split("/").pop();
+                        this.src = "' . esc_url($fallback_url) . '" + filename;
+                        this.onerror = null;
+                    };
+                });
             });
-        });
-    </script>
-    <?php
+        </script>';
+
+        $html = str_replace('<head>', '<head><base href="' . esc_url($base_url) . '">' . $script, $html);
+
+        status_header(200);
+        header('Content-Type: text/html; charset=utf-8');
+        echo $html;
+        exit;
+    }
 }
-add_action( 'wp_head', 'enqueue_image_fallback_script' );
+});
