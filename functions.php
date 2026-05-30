@@ -176,12 +176,12 @@ if ( defined( 'JETPACK__VERSION' ) ) {
 	require get_template_directory() . '/inc/jetpack.php';
 }
 
-// 1. Catch ALL paths — must be registered AFTER WordPress's own rules
+// 1. Register the rewrite rule — captures everything after the theme's app root
 add_action('init', function () {
     add_rewrite_rule(
-        '^(.+)/?$',                          // matches anything: foo, foo/bar, foo/bar/baz
+        '^app(/.*)?$',
         'index.php?app_path=$matches[1]',
-        'bottom'                             // 'bottom' so WP's own routes (admin, feed, etc.) take priority
+        'top'
     );
 });
 
@@ -195,31 +195,37 @@ add_filter('query_vars', function ($vars) {
 add_action('template_redirect', function () {
     $path = get_query_var('app_path', null);
 
-    if ($path !== null && $path !== '') {
+    if ($path !== null) {
         $dist_dir = get_template_directory() . '/dist';
 
-        // Sanitize: prevent directory traversal
+        // Sanitize: remove leading slash, prevent directory traversal
         $clean_path = ltrim($path, '/');
         $clean_path = str_replace(['..', '\\'], '', $clean_path);
 
-        // Candidate files in order of preference
-        $candidates = [
-            $dist_dir . '/' . $clean_path . '/index.html',  // dist/subject/english/index.html
-            $dist_dir . '/' . $clean_path . '.html',        // dist/subject/english.html
-            $dist_dir . '/index.html',                      // fallback root
-        ];
+        // Build candidate paths in order of preference:
+        // 1. dist/subject/english/index.html  (exact subfolder index)
+        // 2. dist/subject/english.html         (if it's a file route)
+        // 3. dist/index.html                   (fallback root SPA)
+        $candidates = [];
 
-        $real_dist = realpath($dist_dir);
+        if ($clean_path !== '') {
+            $candidates[] = $dist_dir . '/' . $clean_path . '/index.html';
+            $candidates[] = $dist_dir . '/' . $clean_path . '.html';
+        }
+
+        $candidates[] = $dist_dir . '/index.html'; // final fallback
 
         foreach ($candidates as $file) {
+            // Ensure resolved path stays inside dist/ (prevent traversal)
             $real = realpath($file);
+            $real_dist = realpath($dist_dir);
 
             if ($real && $real_dist && str_starts_with($real, $real_dist . DIRECTORY_SEPARATOR)) {
                 $html = file_get_contents($real);
 
-                // Point base href to the resolved subfolder
+                // Set base href to the current subfolder so relative assets resolve
                 $sub_url = get_template_directory_uri() . '/dist/'
-                           . trailingslashit($clean_path);
+                           . ($clean_path !== '' ? trailingslashit($clean_path) : '');
 
                 $html = str_replace(
                     '<head>',
@@ -233,5 +239,8 @@ add_action('template_redirect', function () {
                 exit;
             }
         }
+
+        // Nothing found — let WP show a 404
+        status_header(404);
     }
 });
