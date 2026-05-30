@@ -241,7 +241,7 @@ add_action('template_redirect', function () {
             document.addEventListener("DOMContentLoaded", function() {
                 document.querySelectorAll("img").forEach(function(img) {
                     img.onerror = function() {
-                        var filename = this.src.split("/").pop();
+                        var filename = this.src.split("/").pop().replace(/\/$/, "");
                         this.src = "' . esc_url($fallback_url) . '" + filename;
                         this.onerror = null;
                     };
