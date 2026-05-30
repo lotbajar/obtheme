@@ -176,44 +176,71 @@ if ( defined( 'JETPACK__VERSION' ) ) {
 	require get_template_directory() . '/inc/jetpack.php';
 }
 
-// 1. Register the rewrite rule — captures everything after /app/ including deep paths
+// 1. Register the rewrite rule — captures everything after the theme's app root
 add_action('init', function () {
     add_rewrite_rule(
-        '^app(/.*)?$',           // matches /app, /app/foo, /app/foo/bar/baz
+        '^app(/.*)?$',
         'index.php?app_path=$matches[1]',
         'top'
     );
 });
 
-// 2. Whitelist the query var so WP doesn't strip it
+// 2. Whitelist the query var
 add_filter('query_vars', function ($vars) {
     $vars[] = 'app_path';
     return $vars;
 });
 
-// 3. Serve index.html for any matched app_path
+// 3. Serve the correct index.html based on the requested sub-path
 add_action('template_redirect', function () {
     $path = get_query_var('app_path', null);
 
-    // Match both /app and /app/anything/deep
     if ($path !== null) {
-        $file = get_template_directory() . '/dist/index.html';
-        if (file_exists($file)) {
-            $html = file_get_contents($file);
+        $dist_dir = get_template_directory() . '/dist';
 
-            // Use the site root as base so absolute asset paths (/assets/...) resolve correctly
-            $base = get_template_directory_uri() . '/dist/';
+        // Sanitize: remove leading slash, prevent directory traversal
+        $clean_path = ltrim($path, '/');
+        $clean_path = str_replace(['..', '\\'], '', $clean_path);
 
-            $html = str_replace(
-                '<head>',
-                '<head><base href="' . esc_url($base) . '/">',
-                $html
-            );
+        // Build candidate paths in order of preference:
+        // 1. dist/subject/english/index.html  (exact subfolder index)
+        // 2. dist/subject/english.html         (if it's a file route)
+        // 3. dist/index.html                   (fallback root SPA)
+        $candidates = [];
 
-            status_header(200);
-            header('Content-Type: text/html; charset=utf-8');
-            echo $html;
-            exit;
+        if ($clean_path !== '') {
+            $candidates[] = $dist_dir . '/' . $clean_path . '/index.html';
+            $candidates[] = $dist_dir . '/' . $clean_path . '.html';
         }
+
+        $candidates[] = $dist_dir . '/index.html'; // final fallback
+
+        foreach ($candidates as $file) {
+            // Ensure resolved path stays inside dist/ (prevent traversal)
+            $real = realpath($file);
+            $real_dist = realpath($dist_dir);
+
+            if ($real && $real_dist && str_starts_with($real, $real_dist . DIRECTORY_SEPARATOR)) {
+                $html = file_get_contents($real);
+
+                // Set base href to the current subfolder so relative assets resolve
+                $sub_url = get_template_directory_uri() . '/dist/'
+                           . ($clean_path !== '' ? trailingslashit($clean_path) : '');
+
+                $html = str_replace(
+                    '<head>',
+                    '<head><base href="' . esc_url($sub_url) . '">',
+                    $html
+                );
+
+                status_header(200);
+                header('Content-Type: text/html; charset=utf-8');
+                echo $html;
+                exit;
+            }
+        }
+
+        // Nothing found — let WP show a 404
+        status_header(404);
     }
 });
