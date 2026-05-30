@@ -253,14 +253,16 @@ add_action('template_redirect', function () {
 function enqueue_image_fallback_script() {
     ?>
     <script>
-        document.querySelectorAll('img').forEach(img => {
-            img.onerror = function() {
-                const filename = this.src.split('/').pop();
-                this.src = '<?php echo get_template_directory_uri(); ?>/dist/' + filename;
-                this.onerror = null;
-            };
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('img').forEach(img => {
+                img.onerror = function() {
+                    const filename = this.src.split('/').pop();
+                    this.src = '<?php echo get_template_directory_uri(); ?>/dist/' + filename;
+                    this.onerror = null;
+                };
+            });
         });
     </script>
     <?php
 }
-add_action( 'wp_footer', 'enqueue_image_fallback_script' );
+add_action( 'wp_head', 'enqueue_image_fallback_script' );
