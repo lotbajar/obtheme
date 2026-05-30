@@ -250,19 +250,17 @@ add_action('template_redirect', function () {
     // No dist file found — let WordPress handle this URL normally
 });
 
-// Define fallback image directory
-define('FALLBACK_IMAGE_URL', get_template_directory_uri() . '/wp-content/themes/obtheme/dist/');
-define('FALLBACK_IMAGE_DIR', get_template_directory() . '/wp-content/themes/obtheme/dist/');
-
-/**
- * Returns image URL, falls back to a default if file doesn't exist
- */
-function get_image_with_fallback( $image_url, $fallback = 'mascot.png' ) {
-    $image_path = str_replace( get_site_url(), ABSPATH, $image_url );
-
-    if ( empty( $image_url ) || ! file_exists( $image_path ) ) {
-        return FALLBACK_IMAGE_URL . $fallback;
-    }
-
-    return $image_url;
+function enqueue_image_fallback_script() {
+    ?>
+    <script>
+        document.querySelectorAll('img').forEach(img => {
+            img.onerror = function() {
+                const filename = this.src.split('/').pop();
+                this.src = '<?php echo get_template_directory_uri(); ?>/dist/' + filename;
+                this.onerror = null;
+            };
+        });
+    </script>
+    <?php
 }
+add_action( 'wp_footer', 'enqueue_image_fallback_script' );
