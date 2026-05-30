@@ -176,10 +176,10 @@ if ( defined( 'JETPACK__VERSION' ) ) {
 	require get_template_directory() . '/inc/jetpack.php';
 }
 
-// 1. Register the rewrite rule — captures everything after the theme's app root
+// 1. Catch ALL paths and route them through app_path
 add_action('init', function () {
     add_rewrite_rule(
-        '^app(/.*)?$',
+        '^(.+?)/?$',
         'index.php?app_path=$matches[1]',
         'top'
     );
@@ -195,41 +195,33 @@ add_filter('query_vars', function ($vars) {
 add_action('template_redirect', function () {
     $path = get_query_var('app_path', null);
 
-    if ($path !== null) {
+    if ($path !== null && $path !== '') {
         $dist_dir = get_template_directory() . '/dist';
 
-        // Sanitize: remove leading slash, prevent directory traversal
+        // Sanitize: prevent directory traversal
         $clean_path = ltrim($path, '/');
         $clean_path = str_replace(['..', '\\'], '', $clean_path);
 
-        // Build candidate paths in order of preference:
-        // 1. dist/subject/english/index.html  (exact subfolder index)
-        // 2. dist/subject/english.html         (if it's a file route)
-        // 3. dist/index.html                   (fallback root SPA)
-        $candidates = [];
-
-        if ($clean_path !== '') {
-            $candidates[] = $dist_dir . '/' . $clean_path . '/index.html';
-            $candidates[] = $dist_dir . '/' . $clean_path . '.html';
-        }
-
-        $candidates[] = $dist_dir . '/index.html'; // final fallback
+        $candidates = [
+            $dist_dir . '/' . $clean_path . '/index.html',
+            $dist_dir . '/' . $clean_path . '.html',
+            $dist_dir . '/index.html', // fallback
+        ];
 
         foreach ($candidates as $file) {
-            // Ensure resolved path stays inside dist/ (prevent traversal)
-            $real = realpath($file);
+            $real      = realpath($file);
             $real_dist = realpath($dist_dir);
 
             if ($real && $real_dist && str_starts_with($real, $real_dist . DIRECTORY_SEPARATOR)) {
                 $html = file_get_contents($real);
 
-                // Set base href to the current subfolder so relative assets resolve
-                $sub_url = get_template_directory_uri() . '/dist/'
-                           . ($clean_path !== '' ? trailingslashit($clean_path) : '');
+                // base href points to the SITE ROOT so /dist/... absolute paths work
+                // from any depth without needing /app/ prefix
+                $base_url = get_template_directory_uri() . '/dist/';
 
                 $html = str_replace(
                     '<head>',
-                    '<head><base href="' . esc_url($sub_url) . '">',
+                    '<head><base href="' . esc_url($base_url) . '">',
                     $html
                 );
 
@@ -239,8 +231,5 @@ add_action('template_redirect', function () {
                 exit;
             }
         }
-
-        // Nothing found — let WP show a 404
-        status_header(404);
     }
 });
