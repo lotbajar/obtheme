@@ -175,82 +175,129 @@ require get_template_directory() . '/inc/customizer.php';
 if ( defined( 'JETPACK__VERSION' ) ) {
 	require get_template_directory() . '/inc/jetpack.php';
 }
+<?php
 
-// 1. Rewrite rules — catches all paths but WP native routes still take priority
+/**
+ * App Path Router
+ * Serves static files from /dist for SPA-style routing,
+ * falling back to WordPress for unmatched paths.
+ */
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+define('APP_DIST_DIR', get_template_directory() . '/dist');
+define('APP_DIST_URI', get_template_directory_uri() . '/dist/');
+
+// Paths that should always resolve to root (dist/index.html)
+define('APP_ROOT_ALIASES', ['', '__root__', 'index', 'index.php', 'index.html']);
+
+
+// ─── 1. Rewrite Rules ────────────────────────────────────────────────────────
+
 add_action('init', function () {
     // Catch root "/"
-    add_rewrite_rule(
-        '^$',
-        'index.php?app_path=__root__',
-        'bottom'
-    );
+    add_rewrite_rule('^$', 'index.php?app_path=__root__', 'bottom');
 
     // Catch all sub-paths
-    add_rewrite_rule(
-        '^(.+?)/?$',
-        'index.php?app_path=$matches[1]',
-        'bottom'
-    );
+    add_rewrite_rule('^(.+?)/?$', 'index.php?app_path=$matches[1]', 'bottom');
 });
 
-// 2. Whitelist the query var
+
+// ─── 2. Whitelist Query Var ──────────────────────────────────────────────────
+
 add_filter('query_vars', function ($vars) {
     $vars[] = 'app_path';
     return $vars;
 });
 
-// 3. Only serve from dist/ if the file actually exists there
+
+// ─── 3. Route Handler ────────────────────────────────────────────────────────
+
 add_action('template_redirect', function () {
-    $path = get_query_var('app_path', null);
+    $real_dist = realpath(APP_DIST_DIR);
 
-    // Resolve the __root__ sentinel back to an empty path
-    if ($path === '__root__') {
-        $path = '';
-    }
-
-    if ($path === null) {
-        return; // let WP handle it
-    }
-
-    $dist_dir  = get_template_directory() . '/dist';
-    $real_dist = realpath($dist_dir);
-
+    // Bail early if dist/ doesn't exist
     if (!$real_dist) {
         return;
     }
 
-    // Sanitize: prevent directory traversal
-    $clean_path = ltrim($path, '/');
-    $clean_path = str_replace(['..', '\\'], '', $clean_path);
+    $path = get_query_var('app_path', null);
 
-    // Root path → try dist/index.html directly
-    // Sub-path  → try dist/{path}/index.html, then dist/{path}.html
-    $candidates = $clean_path === ''
-        ? [$dist_dir . '/index.html']
-        : [
-            $dist_dir . '/' . $clean_path . '/index.html',
-            $dist_dir . '/' . $clean_path . '.html',
-          ];
-
-    foreach ($candidates as $file) {
-        $real = realpath($file);
-
-        if ($real && str_starts_with($real, $real_dist . DIRECTORY_SEPARATOR)) {
-            $html = file_get_contents($real);
-
-            $base_url = get_template_directory_uri() . '/dist/';
-            $html = str_replace(
-                '<head>',
-                '<head><base href="' . esc_url($base_url) . '">',
-                $html
-            );
-
-            status_header(200);
-            header('Content-Type: text/html; charset=utf-8');
-            echo $html;
-            exit;
-        }
+    // Not our request — let WP handle it
+    if ($path === null) {
+        return;
     }
 
-    // No dist file found — let WordPress handle this URL normally
+    // Normalize root aliases → empty string
+    $path = in_array($path, APP_ROOT_ALIASES, true) ? '' : $path;
+
+    // Sanitize: strip traversal attempts and backslashes
+    $clean = ltrim($path, '/');
+    $clean = str_replace(['..', '\\'], '', $clean);
+
+    // Build candidate file list
+    $candidates = $clean === ''
+        ? [APP_DIST_DIR . '/index.html']
+        : [
+            APP_DIST_DIR . '/' . $clean . '/index.html',
+            APP_DIST_DIR . '/' . $clean . '.html',
+        ];
+
+    foreach ($candidates as $file) {
+        $real_file = realpath($file);
+
+        // Security: ensure resolved path is inside dist/
+        if (!$real_file || !str_starts_with($real_file, $real_dist . DIRECTORY_SEPARATOR)) {
+            continue;
+        }
+
+        serve_dist_file($real_file, $real_dist);
+        exit;
+    }
+
+    // No dist file matched — fall through to WordPress
 });
+
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Read and serve an HTML file from dist/, injecting a <base> tag.
+ */
+function serve_dist_file(string $real_file, string $real_dist): void {
+    $html = file_get_contents($real_file);
+
+    if ($html === false) {
+        status_header(500);
+        return;
+    }
+
+    // Inject <base> tag so relative assets resolve correctly
+    $html = inject_base_tag($html, $real_file, $real_dist);
+
+    status_header(200);
+    header('Content-Type: text/html; charset=utf-8');
+    header('X-Robots-Tag: noindex', true); // optional: prevent indexing of SPA routes
+    echo $html;
+}
+
+/**
+ * Inject <base href> pointing to the file's directory within dist/.
+ * e.g. dist/about/index.html → base href = /dist/about/
+ */
+function inject_base_tag(string $html, string $real_file, string $real_dist): string {
+    // Already has a <base> tag — don't double-inject
+    if (stripos($html, '<base') !== false) {
+        return $html;
+    }
+
+    // Compute relative path from dist/ to the file's directory
+    $rel_dir = ltrim(str_replace($real_dist, '', dirname($real_file)), DIRECTORY_SEPARATOR);
+    $base_url = APP_DIST_URI . ($rel_dir ? trailingslashit($rel_dir) : '');
+
+    return str_replace(
+        '<head>',
+        '<head>' . PHP_EOL . '  <base href="' . esc_url($base_url) . '">',
+        $html
+    );
+}
