@@ -176,12 +176,12 @@ if ( defined( 'JETPACK__VERSION' ) ) {
 	require get_template_directory() . '/inc/jetpack.php';
 }
 
-// 1. Catch ALL paths and route them through app_path
+// 1. Rewrite rule — catches all paths but WP native routes still take priority
 add_action('init', function () {
     add_rewrite_rule(
         '^(.+?)/?$',
         'index.php?app_path=$matches[1]',
-        'top'
+        'bottom' // <-- 'bottom' so WP's own rules (pages, posts) match first
     );
 });
 
@@ -191,45 +191,52 @@ add_filter('query_vars', function ($vars) {
     return $vars;
 });
 
-// 3. Serve the correct index.html based on the requested sub-path
+// 3. Only serve from dist/ if the file actually exists there
 add_action('template_redirect', function () {
     $path = get_query_var('app_path', null);
 
-    if ($path !== null && $path !== '') {
-        $dist_dir = get_template_directory() . '/dist';
+    if ($path === null || $path === '') {
+        return; // let WP handle it
+    }
 
-        // Sanitize: prevent directory traversal
-        $clean_path = ltrim($path, '/');
-        $clean_path = str_replace(['..', '\\'], '', $clean_path);
+    $dist_dir  = get_template_directory() . '/dist';
+    $real_dist = realpath($dist_dir);
 
-        $candidates = [
-            $dist_dir . '/' . $clean_path . '/index.html',
-            $dist_dir . '/' . $clean_path . '.html',
-            $dist_dir . '/index.html', // fallback
-        ];
+    if (!$real_dist) {
+        return; // dist folder doesn't exist, bail out
+    }
 
-        foreach ($candidates as $file) {
-            $real      = realpath($file);
-            $real_dist = realpath($dist_dir);
+    // Sanitize: prevent directory traversal
+    $clean_path = ltrim($path, '/');
+    $clean_path = str_replace(['..', '\\'], '', $clean_path);
 
-            if ($real && $real_dist && str_starts_with($real, $real_dist . DIRECTORY_SEPARATOR)) {
-                $html = file_get_contents($real);
+    $candidates = [
+        $dist_dir . '/' . $clean_path . '/index.html',
+        $dist_dir . '/' . $clean_path . '.html',
+    ];
 
-                // base href points to the SITE ROOT so /dist/... absolute paths work
-                // from any depth without needing /app/ prefix
-                $base_url = get_template_directory_uri() . '/dist/';
+    // NOTE: No root dist/index.html fallback here — if no file matches,
+    // we fall through to WordPress so pages/posts render normally
 
-                $html = str_replace(
-                    '<head>',
-                    '<head><base href="' . esc_url($base_url) . '">',
-                    $html
-                );
+    foreach ($candidates as $file) {
+        $real = realpath($file);
 
-                status_header(200);
-                header('Content-Type: text/html; charset=utf-8');
-                echo $html;
-                exit;
-            }
+        if ($real && str_starts_with($real, $real_dist . DIRECTORY_SEPARATOR)) {
+            $html = file_get_contents($real);
+
+            $base_url = get_template_directory_uri() . '/dist/';
+            $html = str_replace(
+                '<head>',
+                '<head><base href="' . esc_url($base_url) . '">',
+                $html
+            );
+
+            status_header(200);
+            header('Content-Type: text/html; charset=utf-8');
+            echo $html;
+            exit;
         }
     }
+
+    // No dist file found — let WordPress handle this URL normally
 });
